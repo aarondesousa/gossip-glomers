@@ -14,9 +14,9 @@ type topologyMsg struct {
 }
 
 type serverBroadcastMsg struct {
-	Type      string   `json:"type"`
-	Message   int      `json:"message"`
-	Receivers []string `json:"receivers"`
+	Type          string          `json:"type"`
+	Message       int             `json:"message"`
+	NotifiedNodes map[string]bool `json:"notified_nodes"`
 }
 
 func main() {
@@ -29,57 +29,39 @@ func main() {
 	n.Handle("broadcast", func(msg maelstrom.Message) error {
 		logger.Println("Message is from: ", msg.Src)
 
-		body := serverBroadcastMsg{}
+		body := serverBroadcastMsg{
+			NotifiedNodes: make(map[string]bool),
+		}
 
 		if msg.Src[0] == 'c' {
-			// var body map[string]any
-
-			// if err := json.Unmarshal(msg.Body, &body); err != nil {
-			// 	return err
-			// }
-
-			// body["type"] = "broadcast_ok"
-			// delete(body, "message")
-
 			res := make(map[string]string)
 			res["type"] = "broadcast_ok"
-			n.Reply(msg, res)
+			err := n.Reply(msg, res)
+			if err != nil {
+				return err
+			}
 		}
 
 		if err := json.Unmarshal(msg.Body, &body); err != nil {
 			return err
 		}
 
-		body.Receivers = append(body.Receivers, n.ID())
-		// messagesAndReceivers[body.Message] = append(messagesAndReceivers[body.Message], body.Receivers...)
+		body.NotifiedNodes[n.ID()] = true
 
-		// msgs = append(msgs, int(body["message"].(float64)))
 		msgs = append(msgs, body.Message)
 
-		// res.MessagesAndReceivers[]
-		// res[int(body["message"].(float64))] = append(res[int(body["message"].(float64))], msg.Src)
-
 		// Send to neighbour server nodes
-		shouldSend := true
-		receivers := body.Receivers
-		body.Receivers = append(body.Receivers, neighbours...)
-
 		for _, neighbour := range neighbours {
-			shouldSend = true
-			for _, receiver := range receivers {
-				if neighbour == receiver {
-					shouldSend = false
-					break
+			_, msgSent := body.NotifiedNodes[neighbour]
+
+			body.NotifiedNodes[neighbour] = true
+
+			if !msgSent {
+				err := n.Send(neighbour, body)
+				if err != nil {
+					return err
 				}
 			}
-
-			if shouldSend {
-				n.Send(neighbour, body)
-			}
-
-			// if msg.Src != neighbour {
-			// 	n.Send(neighbour, body)
-			// }
 		}
 
 		return nil
