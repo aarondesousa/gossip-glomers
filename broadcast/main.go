@@ -3,7 +3,8 @@ package main
 import (
 	"encoding/json"
 	"log"
-	"os"
+	"sync"
+	"time"
 
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 )
@@ -21,15 +22,17 @@ type serverBroadcastMsg struct {
 
 func main() {
 	n := maelstrom.NewNode()
-	var msgs []int
+	msgs := make(map[int]bool)
 	var neighbours []string
-	// messagesAndReceivers := make(map[int][]string)
-	logger := log.New(os.Stderr, "Knob: ", 0)
+	// logger := log.New(os.Stderr, "Knob: ", 0)
+	var mu sync.Mutex
 
 	n.Handle("broadcast", func(msg maelstrom.Message) error {
-		logger.Println("Message is from: ", msg.Src)
+		// logger.Println("Message is from: ", msg.Src)
 
 		body := serverBroadcastMsg{
+			Type:          "",
+			Message:       0,
 			NotifiedNodes: make(map[string]bool),
 		}
 
@@ -46,31 +49,32 @@ func main() {
 			return err
 		}
 
-		body.NotifiedNodes[n.ID()] = true
-
-		msgs = append(msgs, body.Message)
-
-		// Send to neighbour server nodes
-		for _, neighbour := range neighbours {
-			_, msgSent := body.NotifiedNodes[neighbour]
-
-			body.NotifiedNodes[neighbour] = true
-
-			if !msgSent {
-				err := n.Send(neighbour, body)
-				if err != nil {
-					return err
-				}
-			}
+		if _, ok := msgs[body.Message]; ok {
+			return nil
 		}
+
+		mu.Lock()
+		msgs[body.Message] = true
+		mu.Unlock()
+
+		go sendMessage(n, body, neighbours)
 
 		return nil
 	})
 
 	n.Handle("read", func(msg maelstrom.Message) error {
 		body := make(map[string]any)
+		var msgList []int
+
+		mu.Lock()
+		for k := range msgs {
+			msgList = append(msgList, k)
+		}
+		mu.Unlock()
+
 		body["type"] = "read_ok"
-		body["messages"] = msgs
+		body["messages"] = msgList
+
 		return n.Reply(msg, body)
 	})
 
@@ -93,3 +97,48 @@ func main() {
 		log.Fatal(err)
 	}
 }
+
+func sendMessage(n *maelstrom.Node, body serverBroadcastMsg, neighbours []string) {
+	// var mu sync.Mutex
+
+	neighboursToMsg := make(map[string]bool)
+	for _, neighbour := range neighbours {
+		if _, alreadyNotified := body.NotifiedNodes[neighbour]; !alreadyNotified {
+			neighboursToMsg[neighbour] = true
+		}
+		body.NotifiedNodes[neighbour] = true
+	}
+
+	body.NotifiedNodes[n.ID()] = true
+
+	// for {
+	// mu.Lock()
+	for neighbour := range neighboursToMsg {
+		n.RPC(neighbour, body, func(msg maelstrom.Message) error {
+			// mu.Lock()
+			delete(neighboursToMsg, neighbour)
+			// mu.Unlock()
+			return nil
+		})
+	}
+	// mu.Unlock()
+
+	time.Sleep(5 * time.Second)
+
+	// mu.Lock()
+	// if len(neighboursToMsg) <= 0 {
+	// break
+	// return
+	// }
+	// mu.Unlock()
+	// }
+}
+
+// func remove(l []string, item string) []string {
+// 	for i, v := range l {
+// 		if v == item {
+// 			return append(l[:i], l[i+1:]...)
+// 		}
+// 	}
+// 	return nil
+// }
