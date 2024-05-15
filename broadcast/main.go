@@ -3,8 +3,8 @@ package main
 import (
 	"encoding/json"
 	"log"
+	"os"
 	"sync"
-	"time"
 
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 )
@@ -99,7 +99,9 @@ func main() {
 }
 
 func sendMessage(n *maelstrom.Node, body serverBroadcastMsg, neighbours []string) {
-	// var mu sync.Mutex
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	logger := log.New(os.Stderr, "Knob: ", 0)
 
 	neighboursToMsg := make(map[string]bool)
 	for _, neighbour := range neighbours {
@@ -114,16 +116,19 @@ func sendMessage(n *maelstrom.Node, body serverBroadcastMsg, neighbours []string
 	// for {
 	// mu.Lock()
 	for neighbour := range neighboursToMsg {
+		wg.Add(1)
 		n.RPC(neighbour, body, func(msg maelstrom.Message) error {
-			// mu.Lock()
+			mu.Lock()
 			delete(neighboursToMsg, neighbour)
-			// mu.Unlock()
+			mu.Unlock()
+			wg.Done()
 			return nil
 		})
 	}
+	logger.Println(neighboursToMsg)
 	// mu.Unlock()
 
-	time.Sleep(5 * time.Second)
+	// time.Sleep(5 * time.Second)
 
 	// mu.Lock()
 	// if len(neighboursToMsg) <= 0 {
@@ -132,6 +137,7 @@ func sendMessage(n *maelstrom.Node, body serverBroadcastMsg, neighbours []string
 	// }
 	// mu.Unlock()
 	// }
+	wg.Wait()
 }
 
 // func remove(l []string, item string) []string {
